@@ -222,3 +222,4 @@ The application uses SQLite by default. The database file (`horoscope.db`) will 
 
 For production, consider switching to PostgreSQL or MySQL by updating the `DATABASE_URL` in your `.env` file.
 # horoscope-api
+# horoscope-api
