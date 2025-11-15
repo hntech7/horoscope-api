@@ -1,24 +1,14 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
 from .config import settings
-from .database import connect_to_mongo, close_mongo_connection
+from .database import connect_to_mongo, close_mongo_connection, db
 from .routers import auth, users, conversations, credits, analytics
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    await connect_to_mongo()
-    yield
-    # Shutdown
-    await close_mongo_connection()
-
-# Initialize FastAPI app
+# Initialize FastAPI app without lifespan for Vercel compatibility
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="Horoscope API with Google and Apple social authentication",
-    lifespan=lifespan
+    description="Horoscope API with Google and Apple social authentication"
 )
 
 # Add CORS middleware
@@ -29,6 +19,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global variable to track database connection
+_db_connected = False
+
+# Database connection middleware for serverless
+@app.middleware("http")
+async def db_middleware(request, call_next):
+    global _db_connected
+    if not _db_connected and db.client is None:
+        try:
+            await connect_to_mongo()
+            _db_connected = True
+        except Exception as e:
+            print(f"Database connection error: {e}")
+    response = await call_next(request)
+    return response
 
 # Include routers
 app.include_router(auth.router, prefix="/api/v1")

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-Startup script for Horoscope API
+Vercel entry point for Horoscope API
 """
 
-import uvicorn
 from app.main import app
 
+# Export the app for Vercel
+# Vercel will automatically detect this as the ASGI application
+
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
