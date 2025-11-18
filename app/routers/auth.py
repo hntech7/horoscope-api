@@ -3,7 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from datetime import datetime
 from ..schemas import (
     TokenResponse, UserResponse, SocialLoginRequest, UserCreate,
-    RefreshTokenRequest, RefreshTokenResponse, LogoutResponse
+    RefreshTokenRequest, RefreshTokenResponse, LogoutResponse, StandardResponse
 )
 from ..auth import (
     create_access_token, get_current_user, generate_user_id,
@@ -12,6 +12,7 @@ from ..auth import (
 )
 from ..crud import get_user_by_provider_id, create_user, get_user_by_email
 from ..models import User
+from ..response_utils import create_success_response, create_error_response, get_success_status_code
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 security = HTTPBearer()

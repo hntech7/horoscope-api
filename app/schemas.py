@@ -1,7 +1,25 @@
 from pydantic import BaseModel, EmailStr, Field
-from typing import Optional, List
+from typing import Optional, List, Any, Generic, TypeVar
 from datetime import datetime
 from beanie import PydanticObjectId
+
+# Generic type for response data
+T = TypeVar('T')
+
+class StandardResponse(BaseModel, Generic[T]):
+    """Standard API response wrapper"""
+    success: bool
+    message: str
+    data: Optional[T] = None
+    error: Optional[str] = None
+    
+    @classmethod
+    def success_response(cls, data: T = None, message: str = "Operation successful"):
+        return cls(success=True, message=message, data=data)
+    
+    @classmethod
+    def error_response(cls, message: str, error: str = None):
+        return cls(success=False, message=message, error=error)
 
 class UserBase(BaseModel):
     name: str

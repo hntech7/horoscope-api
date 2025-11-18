@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from typing import List, Optional
 from datetime import datetime
 from beanie import PydanticObjectId
 from ..models import User, Conversation, Chat, UserCredits, CreditTransaction, FeatureType, FEATURE_COSTS
-from ..schemas import ConversationRequest, ConversationResponse, ConversationListResponse, ChatResponse
+from ..schemas import ConversationRequest, ConversationResponse, ConversationListResponse, ChatResponse, StandardResponse
 from ..auth import get_current_user
+from ..response_utils import create_success_response, create_error_response, get_success_status_code
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -55,9 +56,10 @@ async def deduct_credits_for_chat(user_id: str) -> dict:
         "remaining_balance": user_credits.balance
     }
 
-@router.post("/", response_model=ConversationResponse)
+@router.post("/", response_model=StandardResponse[ConversationResponse])
 async def create_or_update_conversation(
     request: ConversationRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -74,6 +76,8 @@ async def create_or_update_conversation(
             timestamp=datetime.utcnow()
         )
         
+        is_new_conversation = False
+        
         if request.conversationId:
             # Update existing conversation
             try:
@@ -84,9 +88,10 @@ async def create_or_update_conversation(
                 )
                 
                 if not conversation:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="Conversation not found"
+                    return create_error_response(
+                        response,
+                        "Conversation not found",
+                        status_code=status.HTTP_404_NOT_FOUND
                     )
                 
                 # Add new chat to existing conversation
@@ -96,9 +101,10 @@ async def create_or_update_conversation(
                 
             except Exception as e:
                 if "not a valid ObjectId" in str(e):
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Invalid conversation ID format"
+                    return create_error_response(
+                        response,
+                        "Invalid conversation ID format",
+                        status_code=status.HTTP_400_BAD_REQUEST
                     )
                 raise e
         else:
@@ -110,6 +116,7 @@ async def create_or_update_conversation(
                 updated_at=datetime.utcnow()
             )
             await conversation.save()
+            is_new_conversation = True
         
         # Convert to response format
         chat_responses = [
@@ -121,7 +128,7 @@ async def create_or_update_conversation(
             for chat in conversation.chats
         ]
         
-        return ConversationResponse(
+        conversation_response = ConversationResponse(
             id=conversation.id,
             userId=conversation.user_id,
             chats=chat_responses,
@@ -129,17 +136,27 @@ async def create_or_update_conversation(
             updatedAt=conversation.updated_at
         )
         
+        return create_success_response(
+            response,
+            data=conversation_response,
+            message="Conversation created successfully" if is_new_conversation else "Chat added to conversation successfully",
+            status_code=get_success_status_code(is_new_conversation)
+        )
+        
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create/update conversation: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to create/update conversation",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.get("/{conversation_id}", response_model=ConversationResponse)
+@router.get("/{conversation_id}", response_model=StandardResponse[ConversationResponse])
 async def get_conversation(
     conversation_id: str,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -153,9 +170,10 @@ async def get_conversation(
         )
         
         if not conversation:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Conversation not found"
+            return create_error_response(
+                response,
+                "Conversation not found",
+                status_code=status.HTTP_404_NOT_FOUND
             )
         
         # Convert to response format
@@ -168,7 +186,7 @@ async def get_conversation(
             for chat in conversation.chats
         ]
         
-        return ConversationResponse(
+        conversation_response = ConversationResponse(
             id=conversation.id,
             userId=conversation.user_id,
             chats=chat_responses,
@@ -176,21 +194,31 @@ async def get_conversation(
             updatedAt=conversation.updated_at
         )
         
+        return create_success_response(
+            response,
+            data=conversation_response,
+            message="Conversation retrieved successfully"
+        )
+        
     except Exception as e:
         if "not a valid ObjectId" in str(e):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid conversation ID format"
+            return create_error_response(
+                response,
+                "Invalid conversation ID format",
+                status_code=status.HTTP_400_BAD_REQUEST
             )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve conversation: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to retrieve conversation",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.get("/", response_model=ConversationListResponse)
+@router.get("/", response_model=StandardResponse[ConversationListResponse])
 async def get_user_conversations(
     skip: int = 0,
     limit: int = 10,
+    response: Response = None,
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -227,20 +255,29 @@ async def get_user_conversations(
                 updatedAt=conversation.updated_at
             ))
         
-        return ConversationListResponse(
+        conversations_list = ConversationListResponse(
             conversations=conversation_responses,
             total=total
         )
         
+        return create_success_response(
+            response,
+            data=conversations_list,
+            message="Conversations retrieved successfully"
+        )
+        
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve conversations: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to retrieve conversations",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.delete("/{conversation_id}")
+@router.delete("/{conversation_id}", response_model=StandardResponse[dict])
 async def delete_conversation(
     conversation_id: str,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -254,24 +291,30 @@ async def delete_conversation(
         )
         
         if not conversation:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Conversation not found"
+            return create_error_response(
+                response,
+                "Conversation not found",
+                status_code=status.HTTP_404_NOT_FOUND
             )
         
         await conversation.delete()
         
-        return {"message": "Conversation deleted successfully"}
+        return create_success_response(
+            response,
+            data={"deleted": True},
+            message="Conversation deleted successfully"
+        )
         
-    except HTTPException:
-        raise
     except Exception as e:
         if "not a valid ObjectId" in str(e):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid conversation ID format"
+            return create_error_response(
+                response,
+                "Invalid conversation ID format",
+                status_code=status.HTTP_400_BAD_REQUEST
             )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete conversation: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to delete conversation",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

@@ -1,8 +1,12 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from .config import settings
 from .database import connect_to_mongo, close_mongo_connection, db
 from .routers import auth, users, conversations, credits, analytics
+from .exception_handlers import http_exception_handler, validation_exception_handler, general_exception_handler
+from .schemas import StandardResponse
+from .response_utils import create_success_response
 
 # Initialize FastAPI app without lifespan for Vercel compatibility
 app = FastAPI(
@@ -36,6 +40,11 @@ async def db_middleware(request, call_next):
     response = await call_next(request)
     return response
 
+# Register exception handlers
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, general_exception_handler)
+
 # Include routers
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
@@ -43,19 +52,29 @@ app.include_router(conversations.router, prefix="/api/v1")
 app.include_router(credits.router, prefix="/api/v1")
 app.include_router(analytics.router, prefix="/api/v1")
 
-@app.get("/")
-async def root():
+@app.get("/", response_model=StandardResponse[dict])
+async def root(response: Response):
     """Root endpoint"""
-    return {
-        "message": "Welcome to Horoscope API",
-        "version": settings.app_version,
-        "docs": "/docs"
-    }
+    return create_success_response(
+        response,
+        data={
+            "version": settings.app_version,
+            "docs": "/docs"
+        },
+        message="Welcome to Horoscope API"
+    )
 
-@app.get("/health")
-async def health_check():
+@app.get("/health", response_model=StandardResponse[dict])
+async def health_check(response: Response):
     """Health check endpoint"""
-    return {"status": "healthy", "version": settings.app_version}
+    return create_success_response(
+        response,
+        data={
+            "status": "healthy",
+            "version": settings.app_version
+        },
+        message="Service is healthy"
+    )
 
 if __name__ == "__main__":
     import uvicorn
