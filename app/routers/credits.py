@@ -234,7 +234,7 @@ async def purchase_credits(
 
 @router.post("/watch-ad")
 async def watch_ad_credits(
-    amount: int = 5,  # Default 5 credits for watching an ad
+    amount: int,  # Default 5 credits for watching an ad
     current_user: User = Depends(get_current_user)
 ):
     """Add credits by watching ads"""
