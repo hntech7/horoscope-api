@@ -18,7 +18,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 security = HTTPBearer()
 
 
-@router.post("/social-login", response_model=TokenResponse)
+@router.post("/social-login", response_model=StandardResponse[TokenResponse])
 async def social_login(
     login_data: SocialLoginRequest,
     response: Response
@@ -40,14 +40,19 @@ async def social_login(
     
     if existing_user:
         # User exists, return token with 200 status
-        response.status_code = status.HTTP_200_OK
         access_token = create_access_token(data={"sub": existing_user.user_id})
         refresh_token = await create_refresh_token_record(existing_user.user_id)
-        return TokenResponse(
+        token_response = TokenResponse(
             access_token=access_token,
             refresh_token=refresh_token,
             token_type="bearer",
             user=UserResponse.model_validate(existing_user)
+        )
+        return create_success_response(
+            response,
+            data=token_response,
+            message="Login successful",
+            status_code=status.HTTP_200_OK
         )
     
     # Check if user exists by email (in case they registered with email before)
@@ -55,7 +60,6 @@ async def social_login(
         existing_user_by_email = await get_user_by_email(login_data.email)
         if existing_user_by_email:
             # Update existing user with social provider info (only if not empty)
-            response.status_code = status.HTTP_200_OK
             
             # Only update fields that have values and don't overwrite existing data with empty values
             if login_data.provider and not existing_user_by_email.provider:
@@ -72,15 +76,20 @@ async def social_login(
             
             access_token = create_access_token(data={"sub": existing_user_by_email.user_id})
             refresh_token = await create_refresh_token_record(existing_user_by_email.user_id)
-            return TokenResponse(
+            token_response = TokenResponse(
                 access_token=access_token,
                 refresh_token=refresh_token,
                 token_type="bearer",
                 user=UserResponse.model_validate(existing_user_by_email)
             )
+            return create_success_response(
+                response,
+                data=token_response,
+                message="Login successful",
+                status_code=status.HTTP_200_OK
+            )
     
     # Create new user
-    response.status_code = status.HTTP_201_CREATED
     new_user_data = UserCreate(
         user_id=generate_user_id(),
         name=login_data.name,
@@ -97,16 +106,23 @@ async def social_login(
     access_token = create_access_token(data={"sub": new_user.user_id})
     refresh_token = await create_refresh_token_record(new_user.user_id)
     
-    return TokenResponse(
+    token_response = TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         token_type="bearer",
         user=UserResponse.model_validate(new_user)
     )
+    
+    return create_success_response(
+        response,
+        data=token_response,
+        message="User created and logged in successfully",
+        status_code=status.HTTP_201_CREATED
+    )
 
 
-@router.post("/refresh", response_model=RefreshTokenResponse)
-async def refresh_access_token(refresh_data: RefreshTokenRequest):
+@router.post("/refresh", response_model=StandardResponse[RefreshTokenResponse])
+async def refresh_access_token(refresh_data: RefreshTokenRequest, response: Response):
     """Refresh access token using refresh token"""
     
     # Verify refresh token
@@ -132,15 +148,22 @@ async def refresh_access_token(refresh_data: RefreshTokenRequest):
     access_token = create_access_token(data={"sub": user.user_id})
     new_refresh_token = await create_refresh_token_record(user.user_id)
     
-    return RefreshTokenResponse(
+    refresh_response = RefreshTokenResponse(
         access_token=access_token,
         refresh_token=new_refresh_token,
         token_type="bearer"
     )
+    
+    return create_success_response(
+        response,
+        data=refresh_response,
+        message="Token refreshed successfully"
+    )
 
 
-@router.post("/logout", response_model=LogoutResponse)
+@router.post("/logout", response_model=StandardResponse[LogoutResponse])
 async def logout(
+    response: Response,
     credentials: HTTPAuthorizationCredentials = Depends(security),
     current_user: User = Depends(get_current_user)
 ):
@@ -153,20 +176,41 @@ async def logout(
     # Revoke all refresh tokens for the user
     await revoke_all_user_refresh_tokens(current_user.user_id)
     
-    return LogoutResponse(message="Successfully logged out")
+    logout_response = LogoutResponse(message="Successfully logged out")
+    return create_success_response(
+        response,
+        data=logout_response,
+        message="Successfully logged out"
+    )
 
 
-@router.post("/logout-all", response_model=LogoutResponse)
-async def logout_all_devices(current_user: User = Depends(get_current_user)):
+@router.post("/logout-all", response_model=StandardResponse[LogoutResponse])
+async def logout_all_devices(
+    response: Response,
+    current_user: User = Depends(get_current_user)
+):
     """Logout user from all devices by revoking all refresh tokens"""
     
     # Revoke all refresh tokens for the user
     await revoke_all_user_refresh_tokens(current_user.user_id)
     
-    return LogoutResponse(message="Successfully logged out from all devices")
+    logout_response = LogoutResponse(message="Successfully logged out from all devices")
+    return create_success_response(
+        response,
+        data=logout_response,
+        message="Successfully logged out from all devices"
+    )
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_current_user_info(current_user = Depends(get_current_user)):
+@router.get("/me", response_model=StandardResponse[UserResponse])
+async def get_current_user_info(
+    response: Response,
+    current_user = Depends(get_current_user)
+):
     """Get current user information"""
-    return UserResponse.model_validate(current_user)
+    user_response = UserResponse.model_validate(current_user)
+    return create_success_response(
+        response,
+        data=user_response,
+        message="User information retrieved successfully"
+    )

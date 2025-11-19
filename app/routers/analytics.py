@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from typing import List, Optional
 from datetime import datetime, timedelta
 from collections import Counter
@@ -7,9 +7,11 @@ from ..schemas import (
     UserAnalyticsResponse,
     AnalyticsSummaryResponse,
     FeatureUsageStats,
-    UserActivityRequest
+    UserActivityRequest,
+    StandardResponse
 )
 from ..auth import get_current_user
+from ..response_utils import create_success_response, create_error_response
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -21,9 +23,10 @@ async def get_or_create_user_analytics(user_id: str) -> UserAnalytics:
         await user_analytics.save()
     return user_analytics
 
-@router.post("/track-activity")
+@router.post("/track-activity", response_model=StandardResponse[dict])
 async def track_user_activity(
     request: UserActivityRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     """Track user activity and session data"""
@@ -55,25 +58,35 @@ async def track_user_activity(
         user_analytics.updated_at = datetime.utcnow()
         await user_analytics.save()
         
-        return {
-            "message": "Activity tracked successfully",
+        activity_data = {
             "total_sessions": user_analytics.total_sessions,
             "total_time_spent": user_analytics.total_time_spent
         }
         
+        return create_success_response(
+            response,
+            data=activity_data,
+            message="Activity tracked successfully"
+        )
+        
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to track activity: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to track activity",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.get("/user", response_model=UserAnalyticsResponse)
-async def get_user_analytics(current_user: User = Depends(get_current_user)):
+@router.get("/user", response_model=StandardResponse[UserAnalyticsResponse])
+async def get_user_analytics(
+    response: Response,
+    current_user: User = Depends(get_current_user)
+):
     """Get current user's analytics data"""
     try:
         user_analytics = await get_or_create_user_analytics(current_user.user_id)
         
-        return UserAnalyticsResponse(
+        analytics_response = UserAnalyticsResponse(
             id=user_analytics.id,
             user_id=user_analytics.user_id,
             feature_usage=user_analytics.feature_usage,
@@ -85,14 +98,22 @@ async def get_user_analytics(current_user: User = Depends(get_current_user)):
             updated_at=user_analytics.updated_at
         )
         
+        return create_success_response(
+            response,
+            data=analytics_response,
+            message="User analytics retrieved successfully"
+        )
+        
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve user analytics: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to retrieve user analytics",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.get("/summary", response_model=AnalyticsSummaryResponse)
-async def get_analytics_summary():
+@router.get("/summary", response_model=StandardResponse[AnalyticsSummaryResponse])
+async def get_analytics_summary(response: Response):
     """Get overall analytics summary (admin endpoint)"""
     try:
         # Get current time boundaries
@@ -155,7 +176,7 @@ async def get_analytics_summary():
         total_sessions = sum(analytics.total_sessions for analytics in all_analytics)
         average_session_duration = total_time / total_sessions if total_sessions > 0 else 0
         
-        return AnalyticsSummaryResponse(
+        summary_response = AnalyticsSummaryResponse(
             total_users=total_users,
             active_users_today=active_users_today,
             active_users_this_week=active_users_this_week,
@@ -165,14 +186,25 @@ async def get_analytics_summary():
             average_session_duration=round(average_session_duration, 2)
         )
         
+        return create_success_response(
+            response,
+            data=summary_response,
+            message="Analytics summary retrieved successfully"
+        )
+        
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve analytics summary: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to retrieve analytics summary",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.get("/feature-usage")
-async def get_feature_usage_stats(current_user: User = Depends(get_current_user)):
+@router.get("/feature-usage", response_model=StandardResponse[dict])
+async def get_feature_usage_stats(
+    response: Response,
+    current_user: User = Depends(get_current_user)
+):
     """Get detailed feature usage statistics for current user"""
     try:
         user_analytics = await get_or_create_user_analytics(current_user.user_id)
@@ -198,20 +230,31 @@ async def get_feature_usage_stats(current_user: User = Depends(get_current_user)
         # Sort by usage count
         feature_stats.sort(key=lambda x: x["usage_count"], reverse=True)
         
-        return {
+        usage_data = {
             "feature_usage_stats": feature_stats,
             "total_features_used": len(feature_stats),
             "most_used_feature": feature_stats[0]["feature_name"] if feature_stats else None
         }
         
+        return create_success_response(
+            response,
+            data=usage_data,
+            message="Feature usage statistics retrieved successfully"
+        )
+        
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve feature usage stats: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to retrieve feature usage stats",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.get("/user-engagement")
-async def get_user_engagement_metrics(current_user: User = Depends(get_current_user)):
+@router.get("/user-engagement", response_model=StandardResponse[dict])
+async def get_user_engagement_metrics(
+    response: Response,
+    current_user: User = Depends(get_current_user)
+):
     """Get user engagement metrics"""
     try:
         user_analytics = await get_or_create_user_analytics(current_user.user_id)
@@ -230,7 +273,7 @@ async def get_user_engagement_metrics(current_user: User = Depends(get_current_u
         # Days since last active
         days_since_last_active = (datetime.utcnow() - user_analytics.last_active).days
         
-        return {
+        engagement_data = {
             "total_sessions": user_analytics.total_sessions,
             "total_time_spent_minutes": user_analytics.total_time_spent,
             "average_sessions_per_day": round(average_sessions_per_day, 2),
@@ -245,8 +288,16 @@ async def get_user_engagement_metrics(current_user: User = Depends(get_current_u
             )
         }
         
+        return create_success_response(
+            response,
+            data=engagement_data,
+            message="User engagement metrics retrieved successfully"
+        )
+        
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve engagement metrics: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to retrieve engagement metrics",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

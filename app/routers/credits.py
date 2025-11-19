@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from typing import List, Optional
 from datetime import datetime
 from ..models import User, UserCredits, CreditTransaction, FeatureType, FEATURE_COSTS
@@ -7,9 +7,11 @@ from ..schemas import (
     FeatureUsageRequest, 
     CreditTransactionResponse, 
     CreditTransactionListResponse,
-    AddCreditsRequest
+    AddCreditsRequest,
+    StandardResponse
 )
 from ..auth import get_current_user
+from ..response_utils import create_success_response, create_error_response
 
 router = APIRouter(prefix="/credits", tags=["credits"])
 
@@ -21,27 +23,39 @@ async def get_or_create_user_credits(user_id: str) -> UserCredits:
         await user_credits.save()
     return user_credits
 
-@router.get("/balance", response_model=CreditBalanceResponse)
-async def get_credit_balance(current_user: User = Depends(get_current_user)):
+@router.get("/balance", response_model=StandardResponse[CreditBalanceResponse])
+async def get_credit_balance(
+    response: Response,
+    current_user: User = Depends(get_current_user)
+):
     """Get current user's credit balance"""
     try:
         user_credits = await get_or_create_user_credits(current_user.user_id)
         
-        return CreditBalanceResponse(
+        balance_response = CreditBalanceResponse(
             balance=user_credits.balance,
             total_earned=user_credits.total_earned,
             total_spent=user_credits.total_spent,
             updated_at=user_credits.updated_at
         )
+        
+        return create_success_response(
+            response,
+            data=balance_response,
+            message="Credit balance retrieved successfully"
+        )
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve credit balance: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to retrieve credit balance",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.post("/use-feature")
+@router.post("/use-feature", response_model=StandardResponse[dict])
 async def use_feature(
     request: FeatureUsageRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     """Deduct credits for using a feature"""
@@ -50,9 +64,10 @@ async def use_feature(
         try:
             feature_type = FeatureType(request.feature_type)
         except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid feature type: {request.feature_type}"
+            return create_error_response(
+                response,
+                f"Invalid feature type: {request.feature_type}",
+                status_code=status.HTTP_400_BAD_REQUEST
             )
         
         # Get credit cost for the feature
@@ -63,9 +78,10 @@ async def use_feature(
         
         # Check if user has enough credits
         if user_credits.balance < credit_cost:
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=f"Insufficient credits. Required: {credit_cost}, Available: {user_credits.balance}"
+            return create_error_response(
+                response,
+                f"Insufficient credits. Required: {credit_cost}, Available: {user_credits.balance}",
+                status_code=status.HTTP_402_PAYMENT_REQUIRED
             )
         
         # Deduct credits
@@ -87,38 +103,47 @@ async def use_feature(
         )
         await transaction.save()
         
-        return {
-            "message": f"Successfully used {feature_type.value} feature",
+        feature_usage_data = {
             "credits_deducted": credit_cost,
-            "remaining_balance": user_credits.balance
+            "remaining_balance": user_credits.balance,
+            "feature_type": feature_type.value
         }
         
-    except HTTPException:
-        raise
+        return create_success_response(
+            response,
+            data=feature_usage_data,
+            message=f"Successfully used {feature_type.value} feature"
+        )
+        
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process feature usage: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to process feature usage",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.post("/add")
+@router.post("/add", response_model=StandardResponse[dict])
 async def add_credits(
     request: AddCreditsRequest,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     """Add credits to user account (purchase or ad watch)"""
     try:
         if request.amount <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Credit amount must be positive"
+            return create_error_response(
+                response,
+                "Credit amount must be positive",
+                status_code=status.HTTP_400_BAD_REQUEST
             )
         
         # Validate credit type
         if request.credit_type not in ["purchase", "ad_watch"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Credit type must be 'purchase' or 'ad_watch'"
+            return create_error_response(
+                response,
+                "Credit type must be 'purchase' or 'ad_watch'",
+                status_code=status.HTTP_400_BAD_REQUEST
             )
         
         # Get user credits
@@ -148,23 +173,29 @@ async def add_credits(
         )
         await transaction.save()
         
-        return {
-            "message": "Credits added successfully",
+        credits_data = {
             "credits_added": request.amount,
             "credit_type": request.credit_type,
             "new_balance": user_credits.balance
         }
         
-    except HTTPException:
-        raise
+        return create_success_response(
+            response,
+            data=credits_data,
+            message="Credits added successfully"
+        )
+        
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to add credits: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to add credits",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.get("/transactions", response_model=CreditTransactionListResponse)
+@router.get("/transactions", response_model=StandardResponse[CreditTransactionListResponse])
 async def get_credit_transactions(
+    response: Response,
     skip: int = 0,
     limit: int = 20,
     transaction_type: Optional[str] = None,
@@ -176,9 +207,10 @@ async def get_credit_transactions(
         query = CreditTransaction.user_id == current_user.user_id
         if transaction_type:
             if transaction_type not in ["credit", "debit"]:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Transaction type must be 'credit' or 'debit'"
+                return create_error_response(
+                    response,
+                    "Transaction type must be 'credit' or 'debit'",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             query = query & (CreditTransaction.transaction_type == transaction_type)
         
@@ -206,22 +238,29 @@ async def get_credit_transactions(
             for transaction in transactions
         ]
         
-        return CreditTransactionListResponse(
+        transactions_list = CreditTransactionListResponse(
             transactions=transaction_responses,
             total=total
         )
         
-    except HTTPException:
-        raise
+        return create_success_response(
+            response,
+            data=transactions_list,
+            message="Credit transactions retrieved successfully"
+        )
+        
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve transactions: {str(e)}"
+        return create_error_response(
+            response,
+            "Failed to retrieve transactions",
+            error=str(e),
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
-@router.post("/purchase")
+@router.post("/purchase", response_model=StandardResponse[dict])
 async def purchase_credits(
     amount: int,
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     """Add credits via purchase"""
@@ -230,11 +269,12 @@ async def purchase_credits(
         credit_type="purchase",
         description=f"Purchased {amount} credits"
     )
-    return await add_credits(request, current_user)
+    return await add_credits(request, response, current_user)
 
-@router.post("/watch-ad")
+@router.post("/watch-ad", response_model=StandardResponse[dict])
 async def watch_ad_credits(
     amount: int,  # Default 5 credits for watching an ad
+    response: Response,
     current_user: User = Depends(get_current_user)
 ):
     """Add credits by watching ads"""
@@ -243,13 +283,19 @@ async def watch_ad_credits(
         credit_type="ad_watch",
         description=f"Earned {amount} credits by watching ads"
     )
-    return await add_credits(request, current_user)
+    return await add_credits(request, response, current_user)
 
-@router.get("/feature-costs")
-async def get_feature_costs():
+@router.get("/feature-costs", response_model=StandardResponse[dict])
+async def get_feature_costs(response: Response):
     """Get the credit costs for all features"""
-    return {
+    feature_costs_data = {
         "feature_costs": {
             feature.value: cost for feature, cost in FEATURE_COSTS.items()
         }
     }
+    
+    return create_success_response(
+        response,
+        data=feature_costs_data,
+        message="Feature costs retrieved successfully"
+    )
