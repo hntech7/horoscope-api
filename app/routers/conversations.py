@@ -2,59 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response
 from typing import List, Optional
 from datetime import datetime
 from beanie import PydanticObjectId
-from ..models import User, Conversation, Chat, UserCredits, CreditTransaction, FeatureType, FEATURE_COSTS
+from ..models import User, Conversation, Chat
 from ..schemas import ConversationRequest, ConversationResponse, ConversationListResponse, ChatResponse, StandardResponse
 from ..auth import get_current_user
 from ..response_utils import create_success_response, create_error_response, get_success_status_code
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
-async def get_or_create_user_credits(user_id: str) -> UserCredits:
-    """Get user credits or create if doesn't exist"""
-    user_credits = await UserCredits.find_one(UserCredits.user_id == user_id)
-    if not user_credits:
-        user_credits = UserCredits(user_id=user_id)
-        await user_credits.save()
-    return user_credits
-
-async def deduct_credits_for_chat(user_id: str) -> dict:
-    """Deduct credits for chat feature usage"""
-    feature_type = FeatureType.CHAT
-    credit_cost = FEATURE_COSTS[feature_type]
-    
-    # Get user credits
-    user_credits = await get_or_create_user_credits(user_id)
-    
-    # Check if user has enough credits
-    if user_credits.balance < credit_cost:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"Insufficient credits. Required: {credit_cost}, Available: {user_credits.balance}"
-        )
-    
-    # Deduct credits
-    balance_before = user_credits.balance
-    user_credits.balance -= credit_cost
-    user_credits.total_spent += credit_cost
-    user_credits.updated_at = datetime.utcnow()
-    await user_credits.save()
-    
-    # Create transaction record
-    transaction = CreditTransaction(
-        user_id=user_id,
-        transaction_type="debit",
-        amount=credit_cost,
-        feature_type=feature_type,
-        description=f"Used {feature_type.value} feature",
-        balance_before=balance_before,
-        balance_after=user_credits.balance
-    )
-    await transaction.save()
-    
-    return {
-        "credits_deducted": credit_cost,
-        "remaining_balance": user_credits.balance
-    }
 
 @router.post("/", response_model=StandardResponse[ConversationResponse])
 async def create_or_update_conversation(
@@ -66,9 +20,6 @@ async def create_or_update_conversation(
     Create a new conversation or add a chat to an existing conversation
     """
     try:
-        # Deduct credits for chat usage
-        credit_info = await deduct_credits_for_chat(current_user.user_id)
-        
         # Create new chat entry
         new_chat = Chat(
             query=request.query,
